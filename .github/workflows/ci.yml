@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
 
 jobs:
   # ==========================================
@@ -34,7 +34,7 @@ jobs:
       - name: Setup PHP Environment
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: "8.2"
           extensions: mbstring, pdo, pdo_mysql, bcmath, json
           coverage: none
 
@@ -103,20 +103,20 @@ jobs:
       - name: Setup Node.js Environment
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: 22
+          cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install NPM Dependencies
-        working-directory: ./frontend
+        working-directory: frontend
         run: npm ci
 
       - name: Run Linting
-        working-directory: ./frontend
+        working-directory: frontend
         run: npm run lint --if-present
 
       - name: Run TypeScript Type-Check & Build
-        working-directory: ./frontend
+        working-directory: frontend
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000/api
         run: npm run build
