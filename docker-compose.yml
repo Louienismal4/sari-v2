@@ -1,0 +1,46 @@
+services:
+  # MySQL Database Service
+  mysql:
+    image: mysql:8.0
+    container_name: sari_mysql
+    restart: always
+    environment:
+      MYSQL_DATABASE: sari_inventory
+      MYSQL_ROOT_PASSWORD: Water123!
+      MYSQL_USER: lwui
+      MYSQL_PASSWORD: Water123!
+    ports:
+      - "3306:3306" # Exposed to your Mac for DBeaver
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - sari_network
+
+  # PHP API Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sari_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/var/www/html
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: sari_inventory
+      DB_USERNAME: lwui
+      DB_PASSWORD: Water123!
+    depends_on:
+      - mysql
+    networks:
+      - sari_network
+
+volumes:
+  db_data:
+
+networks:
+  sari_network:
+    driver: bridge
