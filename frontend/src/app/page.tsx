@@ -24,22 +24,39 @@ export default function InventoryPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
+  const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
     let ignore = false;
 
     async function loadProducts() {
       try {
+        setError(null);
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
         const res = await fetch(
           `${apiUrl}/products?search=${encodeURIComponent(search)}`,
+          {
+            headers: {
+              Accept: "application/json",
+            },
+          },
         );
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => null);
+          const message = errorData?.message || `Server returned ${res.status} ${res.statusText}`;
+          throw new Error(message);
+        }
+
         const json = await res.json();
         if (!ignore && json.status === "success") {
           setProducts(json.data);
         }
-      } catch (err) {
+      } catch (err: unknown) {
         if (!ignore) {
-          console.error("Failed to fetch inventory:", err);
+          const message = err instanceof Error ? err.message : "Failed to fetch inventory";
+          console.error("Failed to fetch inventory:", message);
+          setError(message);
         }
       } finally {
         if (!ignore) {
@@ -77,7 +94,12 @@ export default function InventoryPage() {
         </header>
 
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          {loading ? (
+          {error ? (
+            <div className="p-8 text-center text-rose-600 bg-rose-50/50">
+              <p className="font-medium">Failed to load inventory</p>
+              <p className="text-xs text-rose-500 mt-1">{error}</p>
+            </div>
+          ) : loading ? (
             <div className="p-8 text-center text-slate-400">
               Loading products...
             </div>

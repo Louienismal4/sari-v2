@@ -38,6 +38,27 @@ services:
     networks:
       - sari_network
 
+  # Next.js Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sari_frontend
+    restart: always
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+      - WATCHPACK_POLLING=true
+    depends_on:
+      - backend
+    networks:
+      - sari_network
+
 volumes:
   db_data:
 
