@@ -33,6 +33,7 @@ services:
       DB_DATABASE: sari_inventory
       DB_USERNAME: lwui
       DB_PASSWORD: Water123!
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     depends_on:
       - mysql
     networks:

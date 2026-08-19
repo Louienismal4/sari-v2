@@ -2,3 +2,6 @@
 Thumbs.db
 *.log
 .agents/*
+.impeccable/*
+.codex/*
+.github/*
