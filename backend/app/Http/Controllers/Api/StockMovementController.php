@@ -11,6 +11,20 @@ use Illuminate\Support\Facades\DB;
 
 class StockMovementController extends Controller
 {
+    public function index(Request $request): JsonResponse
+    {
+        $limit = min((int) $request->input('limit', 20), 100);
+        $movements = StockMovement::with('product.category')
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $movements
+        ]);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([

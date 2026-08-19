@@ -1,25 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { Sparkles, AlertCircle, X } from "lucide-react";
+import { Plus, Sparkles, AlertCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { AppHeader } from "@/components/layout/AppHeader";
-import { ValuationKPIs } from "@/components/dashboard/ValuationKPIs";
-import { CategoryBreakdown } from "@/components/dashboard/CategoryBreakdown";
-import { RestockUrgencyFeed } from "@/components/dashboard/RestockUrgencyFeed";
-import { TopMarginLeaders } from "@/components/dashboard/TopMarginLeaders";
-import { ActivityLedger } from "@/components/dashboard/ActivityLedger";
+import { ProductFilters } from "@/components/products/ProductFilters";
 import { ProductTable } from "@/components/products/ProductTable";
 import { ProductModal } from "@/components/products/ProductModal";
 import { DeleteConfirmationModal } from "@/components/common/DeleteConfirmationModal";
-import { Product, StockMovement, SortField, SortOrder, ProductFormData } from "@/types/inventory";
-import { recordStockMovement, fetchStockMovements } from "@/services/stockMovementService";
-import { updateProduct, deleteProduct, createProduct } from "@/services/productService";
+import { CatalogSummaryBar } from "@/components/products/CatalogSummaryBar";
+import { Product, StockFilter, SortField, SortOrder, ProductFormData } from "@/types/inventory";
+import { createProduct, updateProduct, deleteProduct } from "@/services/productService";
+import { recordStockMovement } from "@/services/stockMovementService";
 import { useInventory } from "@/context/InventoryContext";
 
-export default function DashboardPage() {
+export default function ProductsListPage() {
   const {
     products,
     categories,
@@ -30,34 +27,34 @@ export default function DashboardPage() {
     totalRevenue,
     totalTubo,
     overallMargin,
-    lowStockCount,
     setSidebarOpen,
     refreshInventory,
     isLoading,
     showToast,
   } = useInventory();
 
-  const [recentMovements, setRecentMovements] = useState<StockMovement[]>([]);
-  const [activeCategory, setActiveCategory] = useState<number | "all">("all");
-  const [updatingStockId, setUpdatingStockId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [currentTime, setCurrentTime] = useState<string>("");
-
-  // Sort State
+  const [stockFilter, setStockFilter] = useState<StockFilter>("all");
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  const [modalLoading, setModalLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [updatingStockId, setUpdatingStockId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Edit / Create Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState<"create" | "edit">("edit");
+  const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
 
-  // Delete Modal State
+  // Delete Confirmation Modal State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState<ProductFormData>({
     name: "",
@@ -73,39 +70,46 @@ export default function DashboardPage() {
     pieces_per_pack: "12",
   });
 
-  // Live clock
+  // Keyboard shortcut '/'
   useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setCurrentTime(
-        now.toLocaleDateString("en-PH", {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      );
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "/" && document.activeElement !== searchInputRef.current) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
     };
-    updateTime();
-    const interval = setInterval(updateTime, 30000);
-    return () => clearInterval(interval);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Load recent stock movements once
+  // Debounce search
   useEffect(() => {
-    let ignore = false;
-    async function loadMovements() {
-      try {
-        const movements = await fetchStockMovements(8);
-        if (!ignore) setRecentMovements(movements);
-      } catch {}
-    }
-    loadMovements();
-    return () => {
-      ignore = true;
-    };
-  }, []);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Open Create Modal
+  const handleOpenCreateModal = () => {
+    setModalMode("create");
+    setEditingProductId(null);
+    setFormData({
+      name: "",
+      original_name: "",
+      barcode: "",
+      category_id: categories[0]?.id ? categories[0].id.toString() : "",
+      unit: "pc",
+      cost_price: "",
+      markup_percent: "25",
+      selling_price: "",
+      stock_quantity: "10",
+      reorder_level: "5",
+      pieces_per_pack: "12",
+    });
+    setFormError(null);
+    setIsModalOpen(true);
+  };
 
   // Open Edit Modal
   const handleOpenEditModal = (prod: Product) => {
@@ -200,13 +204,13 @@ export default function DashboardPage() {
     }
   };
 
-  // Request Delete Modal
+  // Request Delete (Opens Confirmation Modal)
   const handleRequestDelete = (product: Product) => {
     setProductToDelete(product);
     setIsDeleteModalOpen(true);
   };
 
-  // Confirm Delete
+  // Confirm and Execute Deletion
   const handleConfirmDelete = async () => {
     if (!productToDelete) return;
     setDeleteLoading(true);
@@ -224,16 +228,6 @@ export default function DashboardPage() {
     }
   };
 
-  // Handle Sort
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-    } else {
-      setSortField(field);
-      setSortOrder("asc");
-    }
-  };
-
   // Quick Stock Adjust
   const handleStockAdjust = async (product: Product, delta: number) => {
     const newStock = product.stock_quantity + delta;
@@ -246,7 +240,7 @@ export default function DashboardPage() {
         product_id: product.id,
         type: delta > 0 ? "restock" : "adjustment",
         quantity_change: delta,
-        notes: delta > 0 ? `Restock +${delta} via Dashboard` : `Sale -${Math.abs(delta)} via Dashboard`,
+        notes: delta > 0 ? `Restock +${delta} via Items Catalog` : `Sale -${Math.abs(delta)} via Items Catalog`,
       });
 
       showToast(
@@ -256,8 +250,6 @@ export default function DashboardPage() {
         delta > 0 ? "success" : "info"
       );
       await refreshInventory();
-      const updatedMovements = await fetchStockMovements(8);
-      setRecentMovements(updatedMovements);
     } catch {
       showToast("Stock update failed.", "error");
     } finally {
@@ -265,12 +257,38 @@ export default function DashboardPage() {
     }
   };
 
-  const displayedProducts = products.filter((p) => {
-    if (activeCategory === "all") return true;
-    return p.category?.id === activeCategory || p.category_id === activeCategory;
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortOrder("asc");
+    }
+  };
+
+  // Filter & Search
+  const filteredProducts = products.filter((p) => {
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
+      const matchName = p.name.toLowerCase().includes(q);
+      const matchBarcode = p.barcode?.toLowerCase().includes(q);
+      const matchOrig = p.original_name?.toLowerCase().includes(q);
+      if (!matchName && !matchBarcode && !matchOrig) return false;
+    }
+
+    if (stockFilter === "low_stock") {
+      return p.stock_quantity <= p.reorder_level;
+    }
+    if (stockFilter === "out_of_stock") {
+      return p.stock_quantity === 0;
+    }
+    if (stockFilter === "in_stock") {
+      return p.stock_quantity > p.reorder_level;
+    }
+    return true;
   });
 
-  const sortedDisplayedProducts = [...displayedProducts].sort((a, b) => {
+  const sortedProducts = [...filteredProducts].sort((a, b) => {
     let comparison = 0;
     if (sortField === "name") {
       comparison = a.name.localeCompare(b.name);
@@ -294,36 +312,30 @@ export default function DashboardPage() {
     return sortOrder === "asc" ? comparison : -comparison;
   });
 
-  const lowStockItems = products.filter((p) => p.stock_quantity <= p.reorder_level);
-
-  // Top Margin Leaders
-  const topMarginProducts = [...products]
-    .map((p) => {
-      const cost = parseFloat(p.cost_price) || 0;
-      const retail = parseFloat(p.selling_price) || 0;
-      const tubo = retail - cost;
-      const marginPct = cost > 0 ? (tubo / cost) * 100 : 0;
-      return { ...p, tubo, marginPct };
-    })
-    .filter((p) => p.cost_price && p.selling_price && p.stock_quantity > 0)
-    .sort((a, b) => b.marginPct - a.marginPct)
-    .slice(0, 4);
-
   return (
     <>
       {/* Header */}
       <AppHeader
-        title="Tindahan Dashboard"
-        subtitle="Live inventory valuation, quick stock logger, profit metrics & restock alerts"
-        currentTime={currentTime}
+        title="List of Items"
+        subtitle="Master database catalog of all products, stock counts, profit margins & prices"
         onOpenSidebar={() => setSidebarOpen(true)}
         actions={
-          <Link href="/manage">
-            <Button size="sm" variant="outline" className="gap-1.5 text-xs bg-zinc-50">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="hidden sm:inline">Receipt &amp; Barcode</span> Station
+          <div className="flex items-center gap-2">
+            <Link href="/manage">
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs bg-zinc-50 hidden sm:inline-flex">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Scan Receipt</span>
+              </Button>
+            </Link>
+            <Button
+              onClick={handleOpenCreateModal}
+              size="sm"
+              className="gap-1.5 text-xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ Add Product</span>
             </Button>
-          </Link>
+          </div>
         }
       />
 
@@ -347,65 +359,49 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      <main className="p-4 sm:p-8 space-y-6 flex-1">
-        {/* 1. Top Executive Valuation KPIs */}
-        <ValuationKPIs
-          totalCapital={totalCapital}
-          totalRevenue={totalRevenue}
-          totalTubo={totalTubo}
-          overallMargin={overallMargin}
-          totalProductsCount={totalSKUs}
-          totalPhysicalUnits={totalUnits}
-          lowStockCount={lowStockCount}
-        />
-
-        {/* 2. Operational Workspace Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left: Quick Product Logger & Categories */}
-          <div className="lg:col-span-8 space-y-6">
-            <Card className="shadow-2xs border-zinc-200">
-              <div className="p-4 border-b border-zinc-200 bg-zinc-50/70">
-                <h3 className="text-sm font-bold text-zinc-900">
-                  Store Inventory &amp; Quick Sale Logger
-                </h3>
-                <p className="text-[11px] text-zinc-500">
-                  Click + / - to log rapid stock adjustments; use action menu to edit details or delete SKUs.
-                </p>
-              </div>
-              <ProductTable
-                products={sortedDisplayedProducts}
-                loading={isLoading}
-                onSort={handleSort}
-                onEdit={handleOpenEditModal}
-                onDelete={handleRequestDelete}
-                onStockAdjust={handleStockAdjust}
-                updatingStockId={updatingStockId}
-              />
-            </Card>
-
-            <CategoryBreakdown
-              categories={categories}
+      {/* Master Catalog Table Container */}
+      <main className="p-4 sm:p-8 flex-1">
+        <Card className="flex flex-col h-[calc(100vh-8.5rem)] overflow-hidden shadow-2xs border-zinc-200">
+          <CardHeader className="p-4 border-b border-zinc-200 space-y-3 bg-zinc-50/80 shrink-0">
+            <ProductFilters
+              search={search}
+              setSearch={setSearch}
+              searchInputRef={searchInputRef}
+              stockFilter={stockFilter}
+              setStockFilter={setStockFilter}
               products={products}
-              activeCategory={activeCategory}
-              onSelectCategory={setActiveCategory}
+            />
+          </CardHeader>
+
+          <div className="flex-1 overflow-y-auto min-h-0 divide-y divide-zinc-100">
+            <ProductTable
+              products={sortedProducts}
+              loading={isLoading}
+              onSort={handleSort}
+              onEdit={handleOpenEditModal}
+              onDelete={handleRequestDelete}
+              onStockAdjust={handleStockAdjust}
+              updatingStockId={updatingStockId}
+              searchQuery={search}
+              onResetFilters={() => {
+                setSearch("");
+                setStockFilter("all");
+              }}
             />
           </div>
 
-          {/* Right: Urgency, Top Margins & Live Feed */}
-          <div className="lg:col-span-4 space-y-6">
-            <RestockUrgencyFeed
-              lowStockItems={lowStockItems}
-              onRestock={(item, qty) => handleStockAdjust(item, qty)}
-            />
-
-            <TopMarginLeaders topMarginProducts={topMarginProducts} />
-
-            <ActivityLedger recentMovements={recentMovements} />
-          </div>
-        </div>
+          <CatalogSummaryBar
+            totalSKUs={totalSKUs}
+            totalUnits={totalUnits}
+            totalCapital={totalCapital}
+            totalRevenue={totalRevenue}
+            totalTubo={totalTubo}
+            overallMargin={overallMargin}
+          />
+        </Card>
       </main>
 
-      {/* Product Edit / Calculator Modal */}
+      {/* Product Create / Edit Modal */}
       <ProductModal
         isOpen={isModalOpen}
         onOpenChange={setIsModalOpen}
