@@ -133,45 +133,81 @@ export default function InventoryPage() {
     return () => { ignore = true; };
   }, []);
 
-  // Fetch Products from API
+  // Fetch Products from API on search or category filter change
+  useEffect(() => {
+    let ignore = false;
+    async function fetchProducts() {
+      try {
+        setLoading(true);
+        setError(null);
+        const apiUrl = getApiUrl();
+        
+        const params = new URLSearchParams();
+        if (debouncedSearch) params.append("search", debouncedSearch);
+        if (typeof activeSection === "number") {
+          params.append("category_id", activeSection.toString());
+        }
+
+        const res = await fetch(`${apiUrl}/products?${params.toString()}`, {
+          headers: { Accept: "application/json" },
+        });
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => null);
+          const message = errorData?.message || `Server returned ${res.status} ${res.statusText}`;
+          throw new Error(message);
+        }
+
+        const json = await res.json();
+        if (!ignore && json.status === "success") {
+          setProducts(json.data);
+        }
+      } catch (err: unknown) {
+        if (!ignore) {
+          const message = err instanceof Error ? err.message : "Failed to fetch inventory data.";
+          console.error("Failed to fetch inventory:", message);
+          setError(message);
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchProducts();
+    return () => {
+      ignore = true;
+    };
+  }, [debouncedSearch, activeSection]);
+
+  // Standalone reload helper for manual refresh
   const loadProducts = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const apiUrl = getApiUrl();
-      
       const params = new URLSearchParams();
       if (debouncedSearch) params.append("search", debouncedSearch);
       if (typeof activeSection === "number") {
         params.append("category_id", activeSection.toString());
       }
-
       const res = await fetch(`${apiUrl}/products?${params.toString()}`, {
         headers: { Accept: "application/json" },
       });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => null);
-        const message = errorData?.message || `Server returned ${res.status} ${res.statusText}`;
-        throw new Error(message);
-      }
-
-      const json = await res.json();
-      if (json.status === "success") {
-        setProducts(json.data);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.status === "success") {
+          setProducts(json.data);
+        }
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to fetch inventory data.";
-      console.error("Failed to fetch inventory:", message);
       setError(message);
     } finally {
       setLoading(false);
     }
   }, [debouncedSearch, activeSection]);
-
-  useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
 
   // Handle Quick Stock Adjust (+1 / -1)
   const handleStockAdjust = async (product: Product, delta: number) => {

@@ -129,12 +129,28 @@ export default function ManageProductsPage() {
   // Table Search Filter for Scanned Queue
   const [tableSearch, setTableSearch] = useState("");
 
-  // Scanner States (Persisted to localStorage)
+  // Scanner States (Persisted to localStorage via lazy initializers)
   const [scanning, setScanning] = useState(false);
-  const [scannedItems, setScannedItems] = useState<ScannedItem[]>([]);
-  const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<string | null>(null);
+  const [scannedItems, setScannedItems] = useState<ScannedItem[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = localStorage.getItem("sari_scanned_receipt_queue");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return sessionStorage.getItem("sari_receipt_preview");
+    } catch {
+      return null;
+    }
+  });
   const [batchImporting, setBatchImporting] = useState(false);
-  const [isHydrated, setIsHydrated] = useState(false);
 
   // Camera & Barcode States
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -171,40 +187,17 @@ export default function ManageProductsPage() {
     }, 3500);
   };
 
-  // Restore Persisted Scanned Queue from localStorage on Mount
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("sari_scanned_receipt_queue");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setScannedItems(parsed);
-        }
-      }
-      const savedPreview = sessionStorage.getItem("sari_receipt_preview");
-      if (savedPreview) {
-        setSelectedReceiptPreview(savedPreview);
-      }
-    } catch (e) {
-      console.error("Failed to load saved scanned items:", e);
-    } finally {
-      setIsHydrated(true);
-    }
-  }, []);
-
   // Save Scanned Queue to localStorage on Change
   useEffect(() => {
-    if (!isHydrated) return;
     try {
       localStorage.setItem("sari_scanned_receipt_queue", JSON.stringify(scannedItems));
     } catch (e) {
       console.error("Failed to persist scanned items:", e);
     }
-  }, [scannedItems, isHydrated]);
+  }, [scannedItems]);
 
   // Save Receipt Preview URL in sessionStorage
   useEffect(() => {
-    if (!isHydrated) return;
     try {
       if (selectedReceiptPreview) {
         sessionStorage.setItem("sari_receipt_preview", selectedReceiptPreview);
@@ -212,7 +205,7 @@ export default function ManageProductsPage() {
         sessionStorage.removeItem("sari_receipt_preview");
       }
     } catch {}
-  }, [selectedReceiptPreview, isHydrated]);
+  }, [selectedReceiptPreview]);
 
   // Audio Beep Feedback Helper
   const playBeep = () => {
@@ -235,12 +228,34 @@ export default function ManageProductsPage() {
     }
   };
 
-  // Stop camera and cleanup on unmount
+  // Stop Camera Scanner Helper
+  const stopCameraScanner = useCallback(() => {
+    if (nativeAnimFrameRef.current) {
+      cancelAnimationFrame(nativeAnimFrameRef.current);
+      nativeAnimFrameRef.current = null;
+    }
+    if (zxingControlsRef.current) {
+      try {
+        zxingControlsRef.current.stop();
+      } catch {}
+      zxingControlsRef.current = null;
+    }
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach((t) => t.stop());
+      videoRef.current.srcObject = null;
+    }
+    setIsCameraActive(false);
+    setTorchOn(false);
+    setHasTorchCapability(false);
+  }, []);
+
+  // Stop camera on unmount
   useEffect(() => {
     return () => {
       stopCameraScanner();
     };
-  }, []);
+  }, [stopCameraScanner]);
 
   // Focus name input when modal opens
   useEffect(() => {
@@ -251,28 +266,7 @@ export default function ManageProductsPage() {
     }
   }, [isModalOpen]);
 
-  // Fetch Categories
-  const loadCategories = useCallback(async () => {
-    try {
-      const apiUrl = getApiUrl();
-      const res = await fetch(`${apiUrl}/categories`, {
-        headers: { Accept: "application/json" },
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.status === "success") {
-          setCategories(json.data);
-          if (json.data.length > 0 && !formData.category_id) {
-            setFormData((prev) => ({ ...prev, category_id: json.data[0].id.toString() }));
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Failed to fetch categories:", err);
-    }
-  }, [formData.category_id]);
-
-  // Fetch Products
+  // Reload products helper for refresh button & post-import
   const loadProducts = useCallback(async () => {
     try {
       const apiUrl = getApiUrl();
@@ -290,29 +284,49 @@ export default function ManageProductsPage() {
     }
   }, []);
 
-  // Fetch Scan Quota from Google AI Studio tracker
-  const loadScanQuota = useCallback(async () => {
-    try {
-      const apiUrl = getApiUrl();
-      const res = await fetch(`${apiUrl}/scan-quota`, {
-        headers: { Accept: "application/json" },
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.status === "success" && json.data) {
-          setScanQuota(json.data);
-        }
-      }
-    } catch {
-      // Offline / fallback
-    }
-  }, []);
-
+  // Fetch initial data on mount
   useEffect(() => {
-    loadCategories();
-    loadProducts();
-    loadScanQuota();
-  }, [loadCategories, loadProducts, loadScanQuota]);
+    let ignore = false;
+
+    async function initializeData() {
+      try {
+        const apiUrl = getApiUrl();
+        const [catRes, prodRes, quotaRes] = await Promise.allSettled([
+          fetch(`${apiUrl}/categories`, { headers: { Accept: "application/json" } }),
+          fetch(`${apiUrl}/products`, { headers: { Accept: "application/json" } }),
+          fetch(`${apiUrl}/scan-quota`, { headers: { Accept: "application/json" } }),
+        ]);
+
+        if (!ignore) {
+          if (catRes.status === "fulfilled" && catRes.value.ok) {
+            const catJson = await catRes.value.json();
+            if (catJson.status === "success") {
+              setCategories(catJson.data);
+            }
+          }
+          if (prodRes.status === "fulfilled" && prodRes.value.ok) {
+            const prodJson = await prodRes.value.json();
+            if (prodJson.status === "success") {
+              setProducts(prodJson.data);
+            }
+          }
+          if (quotaRes.status === "fulfilled" && quotaRes.value.ok) {
+            const quotaJson = await quotaRes.value.json();
+            if (quotaJson.status === "success" && quotaJson.data) {
+              setScanQuota(quotaJson.data);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to initialize management data:", err);
+      }
+    }
+
+    initializeData();
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   // Margin / Markup Auto-Calculation Handlers
   const handleCostPriceChange = (newCostStr: string) => {
@@ -649,28 +663,6 @@ export default function ManageProductsPage() {
         }
       }
     }
-  };
-
-  // Stop Camera Scanner
-  const stopCameraScanner = () => {
-    if (nativeAnimFrameRef.current) {
-      cancelAnimationFrame(nativeAnimFrameRef.current);
-      nativeAnimFrameRef.current = null;
-    }
-    if (zxingControlsRef.current) {
-      try {
-        zxingControlsRef.current.stop();
-      } catch {}
-      zxingControlsRef.current = null;
-    }
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((t) => t.stop());
-      videoRef.current.srcObject = null;
-    }
-    setIsCameraActive(false);
-    setTorchOn(false);
-    setHasTorchCapability(false);
   };
 
   // Helper to read & optimize receipt image to base64
